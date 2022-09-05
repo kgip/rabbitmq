@@ -1,0 +1,27 @@
+{{- if not $.Values.storage.storageClassName }}
+{{- $r := int $.Values.replicaCount }}
+{{- range $i, $v := untilStep 0 (int ($.Values.replicaCount)) 1 }}
+{{- if lt $i $r }}
+{{- range $key, $value := $.Values.storage.local }}
+{{- if eq (toString ($i)) $key }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-datadir-{{ template "rabbitmq.name" $ }}-{{ $i }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $.Values.storage.capacity }}
+  selector:
+    matchLabels:
+      app: {{ template "rabbitmq.name" $ }}
+      podindex: '{{ $i }}'
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

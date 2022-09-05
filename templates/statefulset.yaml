@@ -1,0 +1,161 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "rabbitmq.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ template "rabbitmq.name" . }}
+spec:
+  serviceName: {{ template "rabbitmq.name" . }}-headless
+  podManagementPolicy: OrderedReady
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ template "rabbitmq.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ template "rabbitmq.name" . }}
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ template "rabbitmq.name" . }}
+                topologyKey: kubernetes.io/hostname
+      tolerations:
+        {{- with .Values.tolerations }}
+{{ toYaml . | indent 8 }}
+        {{- end }}
+{{- if eq .Values.enableSecurityContext true }}
+      securityContext:
+        sysctls:
+        - name: net.core.somaxconn
+          value: "2048"
+{{- end }}
+      initContainers:
+      - name: rabbitmq-init
+        image: {{ template "busybox.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+          - sh
+          - -c
+          - cp /rabbitmq/.erlang.cookie /rabbitmq/shared-erlang-cookie
+        volumeMounts:
+          - mountPath: /rabbitmq/
+            name: erlang-cookie
+          - mountPath: /rabbitmq/shared-erlang-cookie
+            name: shared-erlang-cookie
+      containers:
+      - name: rabbitmq-server
+        image: {{ template "rabbitmq.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: rabbitmq
+          protocol: TCP
+          containerPort: 5672
+        - name: rabbitmq-http
+          protocol: TCP
+          containerPort: 15672
+        env:
+        - name: SVC_NAME
+          value: {{ template "rabbitmq.name" . }}-headless
+        - name: STS_NAME
+          value: {{ template "rabbitmq.name" . }}
+        - name: NAMESPACE
+          value: {{ .Values.namespace }}
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: RABBITMQ_USE_LONGNAME
+          value: "true"
+        - name: RABBITMQ_NODENAME
+          value: rabbit@$(POD_NAME).$(SVC_NAME).$(NAMESPACE).svc.cluster.local
+        - name: RABBITMQ_ERLANG_COOKIE
+          valueFrom:
+            secretKeyRef:
+              key: .erlang.cookie
+              name: erlang-cookie
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 15
+          successThreshold: 1
+          failureThreshold: 5
+          tcpSocket:
+            port: 5672
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 15
+          successThreshold: 1
+          failureThreshold: 5
+          tcpSocket:
+            port: 5672
+        resources:
+          {{- with .Values.resources }}
+{{ toYaml . | indent 10 }}
+          {{- end }}
+        volumeMounts:
+        - name: shared-erlang-cookie
+          mountPath: /var/lib/rabbitmq/
+        - name: rabbitmq-datadir
+          mountPath: /var/lib/rabbitmq/mnesia
+        - name: config
+          mountPath: /etc/rabbitmq/conf.d/
+        lifecycle:
+          postStart:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  for((;;))
+                  do
+                    rabbitmq-diagnostics node_health_check >/dev/null 2>&1
+                    if [ $? -eq 0 ];then
+                        break
+                    fi
+                    sleep 1
+                  done
+                  master="${STS_NAME}"-0.${SVC_NAME}.${NAMESPACE}.svc.cluster.local
+                  if [[ "$POD_NAME" =~ .*-0$ ]];then
+                    echo "master..."
+                  else
+                    rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@"$master" && rabbitmqctl start_app
+                  fi
+{{- if .Values.rabbitmq.mirrorQueue.enableMirrorQueue }}
+                  for((;;))
+                  do
+                    {{ template "mirrorqueue-init-command" . }}
+                    if [ $? -eq 0 ];then
+                        break
+                    fi
+                    sleep 3
+                  done
+{{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ template "rabbitmq.name" . }}-configmap
+      - name: erlang-cookie
+        secret:
+          secretName: erlang-cookie
+          defaultMode: 0400
+      - name: shared-erlang-cookie
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: rabbitmq-datadir
+    spec:
+{{- if .Values.storage.storageClassName }}
+      storageClassName: "{{ .Values.storage.storageClassName }}"
+{{- end }}
+      accessModes: [ ReadWriteOnce ]
+      resources:
+        requests:
+          storage: {{ .Values.storage.capacity }}

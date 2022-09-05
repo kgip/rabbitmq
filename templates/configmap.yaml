@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "rabbitmq.name" . }}-configmap
+  namespace: {{ .Values.namespace }}
+data:
+  rabbitmq.conf: |
+{{- include "rabbitmq.conf" . }}
+

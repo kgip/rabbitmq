@@ -1,0 +1,55 @@
+namespace: default
+env:
+  language: en_US.UTF-8
+  timezone: Asia/Shanghai
+# Setting Sysctls for Pod
+enableSecurityContext: true
+replicaCount: 3
+debug: false
+image:
+  registry: ""
+  pullPolicy: IfNotPresent
+  #pullPolicy: Always
+  rabbitmq:
+    repository: rabbitmq
+    tag: 3-management
+  busybox:
+    repository: busybox
+    tag: 1.35.0
+rabbitmq:
+  vhost: /
+  username: root
+  password: 123456
+  mirrorQueue:
+    enableMirrorQueue: true
+    mirrorPolicyName: "mirror_queue"
+    mirrorQueuePattern: "^"
+    definition: '{"ha-mode":"exactly","ha-params":2,"ha-sync-mode":"automatic"}'
+#port
+service:
+  rabbitmq:
+    port: 5672
+  rabbitmqhttp:
+    port: 15672
+storage:
+  storageClassName: ""
+  capacity: 10Gi
+  local:
+    0:
+      host: node0
+      path: /sysvol/rabbitmq/rabbitmq-0
+    1:
+      host: node1
+      path: /sysvol/rabbitmq/rabbitmq-1
+    2:
+      host: node2
+      path: /sysvol/rabbitmq/rabbitmq-2
+resources:
+  requests:
+    cpu: 1
+    memory: 2Gi
+  limits:
+    cpu: 4
+    memory: 8Gi
+
+tolerations: { }
